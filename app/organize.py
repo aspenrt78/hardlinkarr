@@ -41,6 +41,31 @@ def arr_managed_folders() -> set[str]:
     return names
 
 
+_torrent_cache: dict = {"ts": 0, "files": frozenset()}
+
+
+def torrent_files(max_age: float = 120) -> frozenset[str]:
+    """Every file the torrent client is seeding or downloading (paths as seen here).
+
+    Those must never be renamed: the client would lose them and stop seeding. If the client is
+    configured but can't be reached this raises, so nothing is renamed on a guess.
+    """
+    from .clients import get_client
+    if time.time() - _torrent_cache["ts"] < max_age:
+        return _torrent_cache["files"]
+    client = get_client()
+    files: set[str] = set()
+    if client:
+        try:
+            with client:
+                for t in client.torrents(with_files=True):
+                    files.update(os.path.normpath(f) for f in t["files"])
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(f"cannot read the torrent client, so files it seeds can't be protected: {e}") from e
+    _torrent_cache.update(ts=time.time(), files=frozenset(files))
+    return _torrent_cache["files"]
+
+
 def _roots() -> list[tuple[str, str]]:
     s = settings.load()
     out = []
@@ -90,7 +115,11 @@ def plan() -> dict:
     managed = arr_managed_folders() if s.get("skip_arr_managed") else set()
     min_size = (s.get("min_video_mb") or 0) * 1024 * 1024
     memo: dict = {}
-    moves, tidy, skipped, unknown = [], 0, [], []
+    moves, tidy, skipped, unknown, seeding = [], 0, [], [], []
+    try:
+        seeded = torrent_files(max_age=0)
+    except RuntimeError as ex:
+        return {"error": str(ex)}
     for root, kind in _roots():
         if not os.path.isdir(root):
             continue
@@ -107,6 +136,9 @@ def plan() -> dict:
                 top = _top_folder(p, root)
                 if top and os.path.basename(top) in managed:
                     skipped.append(p)
+                    continue
+                if os.path.normpath(p) in seeded:
+                    seeding.append(p)
                     continue
                 try:
                     e = plan_file(p, root, kind, memo)
@@ -131,7 +163,7 @@ def plan() -> dict:
                 e["message"] = "another file maps to the same name (duplicate?) - see Cleanup → Duplicates"
     moves.sort(key=lambda e: (not e["confident"], e["conflict"], e["src"]))
     return {"moves": moves, "tidy": tidy, "arr_managed": len(skipped), "unknown": unknown,
-            "generated": time.time()}
+            "seeding": len(seeding), "seeding_examples": seeding[:5], "generated": time.time()}
 
 
 def _same(a: str, b: str) -> bool:
@@ -148,6 +180,8 @@ def move(src: str, dest: str) -> str:
         raise PermissionError("both paths must be inside the library folders")
     if not os.path.isfile(src):
         raise FileNotFoundError(src)
+    if os.path.normpath(src) in torrent_files():
+        raise PermissionError("this file belongs to an active torrent - renaming it would stop it seeding")
     old_dir = os.path.dirname(src)
     if os.path.lexists(dest):
         if not _same(src, dest):
@@ -201,6 +235,11 @@ def auto_rename(lib_path: str, memo: dict | None = None) -> str | None:
         return None
     top = _top_folder(lib_path, root_kind[0])
     if s.get("skip_arr_managed") and top and os.path.basename(top) in arr_managed_folders():
+        return None
+    try:
+        if os.path.normpath(lib_path) in torrent_files():
+            return None
+    except RuntimeError:
         return None
     e = plan_file(lib_path, root_kind[0], root_kind[1], memo)
     if not e["dest"] or e["confidence"] < float(s.get("match_threshold") or 0.8):
