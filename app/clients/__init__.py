@@ -30,6 +30,15 @@ def map_path(remote: str) -> str:
     return posixpath.normpath(remote)
 
 
+def content_name(t: dict) -> str:
+    """The torrent's top-level file/folder on disk. It can differ from the display name."""
+    save = (t.get("save_path") or "").rstrip("/")
+    content = t.get("content_path") or ""
+    if save and content.startswith(save + "/"):
+        return content[len(save) + 1:].split("/")[0]
+    return t.get("name") or ""
+
+
 def suggest_mappings(torrents: list[dict], limit: int = 300) -> list[dict]:
     """Work out the path mappings needed for torrents whose data can't be found here.
 
@@ -55,7 +64,7 @@ def suggest_mappings(torrents: list[dict], limit: int = 300) -> list[dict]:
 
     votes: dict[str, Counter] = defaultdict(Counter)
     for t in torrents[:limit]:
-        save, name = (t.get("save_path") or "").rstrip("/"), t.get("name") or ""
+        save, name = (t.get("save_path") or "").rstrip("/"), content_name(t)
         if not save.startswith("/") or not name or os.path.exists(posixpath.join(save, name)):
             continue
         parts = save.strip("/").split("/")
