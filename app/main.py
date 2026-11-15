@@ -219,8 +219,14 @@ def test(what: str, body: dict = Body(default={})) -> dict:
                     version = client.test()
                     ts = client.torrents(with_files=False)
                 cats = sorted({t["category"] for t in ts if t["category"]})
+                from .clients import suggest_mappings
+                missing = [t for t in ts if t["save_path"] and t["name"]
+                           and not os.path.exists(os.path.join(t["save_path"], t["name"]))]
                 return {"ok": True, "message": f"{version} - {len(ts)} torrents", "categories": cats,
-                        "save_paths": sorted({t["save_path"] for t in ts})[:20]}
+                        "save_paths": sorted({t["save_path"] for t in ts})[:20],
+                        "missing": len(missing),
+                        "missing_paths": sorted({t["save_path"] for t in missing})[:10],
+                        "suggested_mappings": suggest_mappings(ts)}
             finally:
                 settings._cache = old
         if what in ("radarr", "sonarr"):

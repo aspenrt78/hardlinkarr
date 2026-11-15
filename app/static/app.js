@@ -511,11 +511,16 @@ function bindTests(root) {
       if (r.checks) html += r.checks.map((c) => `<div class="check">${c.ok ? "✅" : "❌"}<div><code>${esc(c.from)}</code> → <code>${esc(c.to)}</code><div class="small muted">${esc(c.message)}</div></div></div>`).join("");
       if (r.libraries) html += r.libraries.length ? `<table class="small" style="margin-top:8px">${r.libraries.map((l) => `<tr><td>${esc(l.library)}</td><td><code>${esc(l.path)}</code></td><td>${l.verdict === "downloads" ? '<span class="badge b-error">torrent folder – switch it</span>' : l.verdict === "library" ? '<span class="badge b-ok">clean library ✓</span>' : '<span class="badge b-ignored">other</span>'}</td></tr>`).join("")}</table>${r.libraries.some((l) => l.verdict === "downloads") ? '<button type="button" class="sm" id="hs2" style="margin-top:8px">How to switch these libraries</button>' : ""}` : '<div class="small muted">No movie/TV libraries found.</div>';
       if (r.categories && r.categories.length) html += `<div class="small muted">Categories found: ${r.categories.map((c) => `<code>${esc(c)}</code>`).join(" ")}</div>`;
-      if (r.save_paths && r.save_paths.length) {
-        const dl = readForm(root).download_dirs || settingsCache?.download_dirs || [];
-        const outside = r.save_paths.filter((p) => !dl.some((d) => p === d || p.startsWith(d.replace(/\/$/, "") + "/")));
-        if (outside.length) html += `<div class="notice" style="margin-top:8px">The client saves to <code>${outside.slice(0, 3).map(esc).join("</code>, <code>")}</code>, which is not inside your download folders. Add a <b>path mapping</b> below so Hardlinkarr can find the files (e.g. <code>${esc(outside[0].split("/").slice(0, 2).join("/") || "/downloads")}</code> → <code>${esc(dl[0] || "/data/torrents")}</code>).</div>`;
+      let addedMaps = [];
+      if (r.suggested_mappings && r.suggested_mappings.length) {
+        // fill in the mappings the server worked out, keeping any the user already entered
+        const cur = readForm(root).path_mappings || [];
+        addedMaps = r.suggested_mappings.filter((m) => !cur.some((c) => c.remote.replace(/\/$/, "") === m.remote));
+        if (addedMaps.length) renderMappings(root, [...cur, ...addedMaps]);
+        html += `<div class="notice ok" style="margin-top:8px">${addedMaps.length ? "Path mappings detected and filled in below:" : "Path mappings detected:"} ${r.suggested_mappings.map((m) => `<div><code>${esc(m.remote)}</code> → <code>${esc(m.local)}</code> <span class="muted small">(${m.count} torrent${m.count === 1 ? "" : "s"})</span></div>`).join("")}</div>`;
       }
+      const unresolved = (r.missing || 0) - (r.suggested_mappings || []).reduce((a, m) => a + m.count, 0);
+      if (unresolved > 0) html += `<div class="notice" style="margin-top:8px">${unresolved} torrent${unresolved === 1 ? "'s" : "s'"} files couldn't be found from this container (e.g. <code>${(r.missing_paths || []).slice(0, 3).map(esc).join("</code>, <code>")}</code>). Those folders are probably not mounted into Hardlinkarr. They'll be skipped; this is fine if they aren't media.</div>`;
       out.innerHTML = html;
       if ($("#hs2", out)) $("#hs2", out).onclick = () => switchGuide({ server: readForm(root).mediaserver_type, library_roots: [readForm(root).movies_dir || settingsCache?.movies_dir, readForm(root).tv_dir || settingsCache?.tv_dir].filter(Boolean) });
     } catch (e) { out.innerHTML = `<div class="notice err">${esc(e.message)}</div>`; }
@@ -595,7 +600,7 @@ const SECTIONS = {
     ${F.text("client_url", "URL", "e.g. http://qbittorrent:8080 (container name works when on the same Docker network)")}
     ${F.text("client_username", "Username", "Deluge doesn't use one.")}${F.secret("client_password", "Password")}</div>
     <div class="row"><button type="button" data-test="client">Test connection</button></div><div id="t-client" style="margin:10px 0"></div>
-    <h3>Path mappings</h3><div class="hint muted small" style="margin-bottom:8px">Only needed if the torrent client sees its download folder under a different path than this container.</div><div id="mappings"></div>
+    <h3>Path mappings</h3><div class="hint muted small" style="margin-bottom:8px">Filled in automatically when you test the connection (and checked again on every scan). Only edit these if detection gets something wrong.</div><div id="mappings"></div>
     <h3>Categories</h3><div class="form-grid">${F.list("include_categories", "Only process these categories", "Empty = all torrents.", "movies, tv")}
     ${F.list("exclude_categories", "Never process these categories", "e.g. categories Radarr/Sonarr already import, or non-media.", "radarr, tv-sonarr, games")}</div>
     <label style="font-weight:550">Category → type hints</label><div class="hint muted small" style="margin-bottom:8px">Tell Hardlinkarr what's in each category for more accurate matching. Names containing "movie"/"tv"/"anime" are detected automatically.</div><div id="cattypes"></div>`,

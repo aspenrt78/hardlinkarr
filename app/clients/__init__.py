@@ -30,6 +30,61 @@ def map_path(remote: str) -> str:
     return posixpath.normpath(remote)
 
 
+def suggest_mappings(torrents: list[dict], limit: int = 300) -> list[dict]:
+    """Work out the path mappings needed for torrents whose data can't be found here.
+
+    For every torrent whose ``save_path/name`` doesn't exist, try replacing a leading part of
+    its save path with one of the folders this container can see, and keep the replacement
+    that makes the torrent's data appear. Returns ``[{remote, local, count}]``.
+    """
+    import os
+    from collections import Counter, defaultdict
+
+    roots = [d for d in (settings.get("download_dirs") or []) if d]
+    roots += [settings.get(k) for k in ("movies_dir", "tv_dir", "anime_dir") if settings.get(k)]
+    cands: list[str] = []
+    for r in roots:
+        r = posixpath.normpath(r)
+        cands.append(r)
+        parent = posixpath.dirname(r)
+        try:
+            cands += [posixpath.join(parent, e.name) for e in os.scandir(parent) if e.is_dir()]
+        except OSError:
+            pass
+    cands = list(dict.fromkeys(cands))
+
+    votes: dict[str, Counter] = defaultdict(Counter)
+    for t in torrents[:limit]:
+        save, name = (t.get("save_path") or "").rstrip("/"), t.get("name") or ""
+        if not save.startswith("/") or not name or os.path.exists(posixpath.join(save, name)):
+            continue
+        parts = save.strip("/").split("/")
+        for i in range(1, len(parts) + 1):  # shortest prefix first: /movies before /movies/sub
+            prefix = "/" + "/".join(parts[:i])
+            rest = "/".join(parts[i:])
+            hit = next((c for c in cands if os.path.exists(posixpath.join(c, rest, name))), None)
+            if hit:
+                votes[prefix][hit] += 1
+                break
+    out = []
+    for prefix, c in votes.items():
+        local, n = c.most_common(1)[0]
+        if local != prefix:
+            out.append({"remote": prefix, "local": local, "count": n})
+    return sorted(out, key=lambda m: -m["count"])
+
+
+def auto_add_mappings(torrents: list[dict]) -> list[dict]:
+    """Detect missing mappings and save them. Returns the mappings that were added."""
+    found = suggest_mappings(torrents)
+    current = list(settings.get("path_mappings") or [])
+    known = {(m.get("remote") or "").rstrip("/") for m in current}
+    added = [{"remote": m["remote"], "local": m["local"]} for m in found if m["remote"] not in known]
+    if added:
+        settings.save({"path_mappings": current + added})
+    return added
+
+
 def get_client() -> TorrentClient | None:
     kind = settings.get("client_type")
     url = settings.get("client_url")

@@ -8,7 +8,7 @@ import traceback
 from typing import Callable
 
 from . import cleanup, db, linker, notify, organize, parser, settings
-from .clients import get_client
+from .clients import auto_add_mappings, get_client
 from .clients.base import ClientError
 from .paths import download_roots
 
@@ -51,6 +51,12 @@ def run_scan(full_rescan: bool = False) -> dict:
             try:
                 with client:
                     torrents = client.torrents(with_files=True)
+                    # the client may report paths this container sees elsewhere: detect and fix
+                    added = auto_add_mappings(torrents)
+                    if added:
+                        db.log("info", "Added path mappings automatically: " + ", ".join(
+                            f"{m['remote']} → {m['local']}" for m in added))
+                        torrents = client.torrents(with_files=True)
                 for t in torrents:
                     claimed.update(t["files"])
                     if not t["completed"] or not _wanted(t):
