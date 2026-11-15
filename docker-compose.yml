@@ -1,0 +1,28 @@
+services:
+  hardlinkarr:
+    build: .
+    image: hardlinkarr:latest
+    container_name: hardlinkarr
+    restart: unless-stopped
+    environment:
+      - PUID=1000        # match the user that owns your media (same as your *arr containers)
+      - PGID=1000
+      - UMASK=002
+      - TZ=Etc/UTC
+    volumes:
+      - ./config:/config
+      # IMPORTANT: mount ONE parent folder that contains BOTH your torrents and your media.
+      # Hardlinks cannot cross mount points, even on the same physical disk.
+      #   /mnt/user/data/torrents/...   (torrent client downloads here)
+      #   /mnt/user/data/media/movies   (library)
+      #   /mnt/user/data/media/tv
+      - /mnt/user/data:/data
+    ports:
+      - "8686:8686"
+    # Join the same network as qBittorrent / Sonarr / Radarr / Plex so you can use
+    # container names (http://qbittorrent:8080) in the settings.
+    # networks: [arr]
+
+# networks:
+#   arr:
+#     external: true
