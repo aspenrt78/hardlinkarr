@@ -661,13 +661,13 @@ routes.settings = async ([sec = "folders"]) => {
 /* ------------------------------------------------------------------ setup wizard */
 routes.setup = async () => {
   const d = await GET("/api/settings");
-  let s = d.settings, step = 0;
+  let s = d.settings, step = 0, detected = {};
   const steps = [
     { title: "Welcome", body: () => `<h2>Welcome to Hardlinkarr 👋</h2>
       <p>Hardlinkarr watches your torrents, identifies each movie and episode with TMDB, and <b>hardlinks</b> it into your library with a clean, media-server-friendly name.</p>
       <ul class="muted"><li>Your torrents keep seeding the original files, untouched.</li><li>A hardlink uses <b>no extra disk space</b> – it's the same data under a second name.</li><li>Plex / Jellyfin / Emby only ever see tidy folders like <code>Movies/Dune (2021)/Dune (2021).mkv</code>.</li></ul>
       <p>This wizard takes about 2 minutes. You can change everything later in Settings.</p><div id="detect"></div>`,
-      init: async (root) => { try { const h = await GET("/api/detect"); if (h.downloads || h.movies || h.tv) { $("#detect", root).innerHTML = `<div class="notice ok">Detected folders: ${[["downloads", "downloads"], ["movies", "movies"], ["tv", "TV"], ["anime", "anime"]].filter(([k]) => h[k]).map(([k, l]) => `${l} <code>${esc(h[k])}</code>`).join(", ")}. They'll be pre-filled on the next step.</div>`; if (!s.setup_complete) { if (h.downloads) s.download_dirs = [h.downloads]; if (h.movies) s.movies_dir = h.movies; if (h.tv) s.tv_dir = h.tv; if (h.anime) s.anime_dir = h.anime; } } else if (!(h.mounts || []).length) { $("#detect", root).innerHTML = `<div class="notice">No media volume seems to be mounted. Check the <code>volumes:</code> section of your docker-compose file (e.g. <code>/mnt/user/data:/data</code>).</div>`; } } catch { /* ignore */ } } },
+      init: async (root) => { try { const h = await GET("/api/detect"); if (h.downloads || h.movies || h.tv) { $("#detect", root).innerHTML = `<div class="notice ok">Detected folders: ${[["downloads", "downloads"], ["movies", "movies"], ["tv", "TV"], ["anime", "anime"]].filter(([k]) => h[k]).map(([k, l]) => `${l} <code>${esc(h[k])}</code>`).join(", ")}. They'll be pre-filled on the next step.</div>`; if (!s.setup_complete) { if (h.downloads) detected.download_dirs = [h.downloads]; if (h.movies) detected.movies_dir = h.movies; if (h.tv) detected.tv_dir = h.tv; if (h.anime) detected.anime_dir = h.anime; Object.assign(s, detected); } } else if (!(h.mounts || []).length) { $("#detect", root).innerHTML = `<div class="notice">No media volume seems to be mounted. Check the <code>volumes:</code> section of your docker-compose file (e.g. <code>/mnt/user/data:/data</code>).</div>`; } } catch { /* ignore */ } } },
     { title: "Folders", body: SECTIONS.folders, tip: "Run the hardlink test before continuing – it catches the most common setup mistake." },
     { title: "TMDB", body: SECTIONS.metadata },
     { title: "Torrent client", body: SECTIONS.client },
@@ -705,7 +705,8 @@ routes.setup = async () => {
       location.hash = "#/dashboard";
     };
   };
-  const keep = async (root) => { const vals = readForm(root); const r = await POST("/api/settings", vals); s = r.settings; };
+  // detected folders are saved with the next step change so they survive the settings reload
+  const keep = async (root) => { const vals = { ...detected, ...readForm(root) }; detected = {}; const r = await POST("/api/settings", vals); s = r.settings; };
   render();
 };
 
