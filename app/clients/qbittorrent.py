@@ -26,7 +26,13 @@ class QBittorrent(TorrentClient):
             # auth may be disabled for local networks: probe a protected endpoint
             probe = self.http.get(f"{self.url}/api/v2/app/version")
             if probe.status_code != 200:
-                raise ClientError(f"qBittorrent login failed ({r.status_code}: {r.text.strip()[:80]})")
+                if r.text.strip() == "Fails.":
+                    raise ClientError(
+                        "qBittorrent rejected the username or password. If you never set a WebUI "
+                        "password, qBittorrent makes a new temporary one at every restart (shown in its "
+                        "log): set a permanent password under Options → Web UI, or add this app's "
+                        "network to \"Bypass authentication for clients in whitelisted IP subnets\".")
+                raise ClientError(f"qBittorrent login failed (HTTP {r.status_code}: {r.text.strip()[:80]})")
         self._logged_in = True
 
     def _get(self, path: str, **params):
