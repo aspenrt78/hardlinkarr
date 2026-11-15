@@ -50,10 +50,9 @@ def can_hardlink(src_dir: str, dst_dir: str) -> tuple[bool, str]:
     """Create a temp file in src_dir and try to hardlink it into dst_dir."""
     if not os.path.isdir(src_dir):
         return False, f"{src_dir} does not exist inside the container"
-    try:
-        os.makedirs(dst_dir, exist_ok=True)
-    except OSError as e:
-        return False, f"cannot create {dst_dir}: {e.strerror}"
+    if not os.path.isdir(dst_dir):
+        # never create folders from a test: a typo would leave stray folders on the user's disk
+        return False, f"{dst_dir} does not exist inside the container - check the path or use Browse"
     probe = os.path.join(src_dir, f".hardlinkarr-probe-{uuid.uuid4().hex[:8]}")
     target = os.path.join(dst_dir, os.path.basename(probe))
     try:

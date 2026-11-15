@@ -170,7 +170,22 @@ def search(kind: str, q: str, year: int | None = None) -> list[dict]:
 
 @app.get("/api/settings")
 def get_settings() -> dict:
+    if not settings.get("setup_complete"):
+        _apply_detected_folders()
     return {"settings": settings.public(), "examples": _safe_examples()}
+
+
+def _apply_detected_folders() -> None:
+    """During setup, swap folder settings that don't exist for the folders found on disk."""
+    hints, fix = detect(), {}
+    dls = settings.get("download_dirs") or []
+    if hints.get("downloads") and not any(os.path.isdir(d) for d in dls):
+        fix["download_dirs"] = [hints["downloads"]]
+    for key, hint in (("movies_dir", "movies"), ("tv_dir", "tv")):
+        if hints.get(hint) and not os.path.isdir(settings.get(key) or ""):
+            fix[key] = hints[hint]
+    if fix:
+        settings.save(fix)
 
 
 def _safe_examples() -> list[str]:
