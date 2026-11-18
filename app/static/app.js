@@ -222,19 +222,26 @@ function mediaServerNotice(c) {
 }
 
 function switchGuide(c) {
-  const roots = (c && c.library_roots) || [];
   const server = (c && c.server) || "plex";
+  // prefer the clean folders as the media server itself sees them; skip ones nested in another
+  const seen = ((c && c.locations) || []).filter((l) => l.verdict === "library").map((l) => l.path);
+  const top = seen.filter((p) => !seen.some((o) => o !== p && p.startsWith(o.replace(/\/$/, "") + "/")));
+  const roots = [...new Set(top.length ? top : ((c && c.library_roots) || []))];
+  const bad = ((c && c.locations) || []).filter((l) => l.verdict === "downloads");
+  const nested = bad.filter((b) => top.some((t) => b.path.startsWith(t.replace(/\/$/, "") + "/")));
+  const here = roots.length ? ` (here: <code>${roots.map(esc).join("</code>, <code>")}</code>)` : " (your Movies and TV library folders)";
   const steps = server === "plex" ? [
     "Plex → Settings → Library: temporarily <b>turn off</b> “Empty trash automatically after every scan”.",
-    `Edit each library (… → Edit → Add folders) and <b>add</b> the Hardlinkarr folder as seen by Plex (here: <code>${roots.map(esc).join("</code>, <code>")}</code>). Keep the old folder for now.`,
+    `Edit each library (… → Edit → Add folders) and <b>add</b> the Hardlinkarr folder as seen by Plex${here}. Keep the old folder for now.`,
     "Scan the library and wait until it finishes. Plex matches the new files to the same movies/shows, so watch history and posters carry over.",
     "Edit the library again and <b>remove</b> the torrent/download folder. Scan again.",
     "… → Manage Library → <b>Empty Trash</b>, then turn the automatic trash setting back on.",
   ] : [
-    `Dashboard → Libraries → open each library and <b>add</b> the Hardlinkarr folder as seen by ${esc(server)} (here: <code>${roots.map(esc).join("</code>, <code>")}</code>).`,
+    `Dashboard → Libraries → open each library and <b>add</b> the Hardlinkarr folder as seen by ${esc(server)}${here}${roots.length && top.length ? " – already done ✓" : ""}.`,
     "Scan the library and wait until it finishes.",
     "<b>Remove</b> the torrent/download folder from the library and scan again. Watched status follows the TMDB/IMDb IDs, so it normally carries over.",
   ];
+  if (nested.length) steps.push(`<code>${nested.map((b) => esc(b.path)).join("</code>, <code>")}</code> ${nested.length === 1 ? "sits" : "sit"} <b>inside</b> a library folder, so removing ${nested.length === 1 ? "it" : "them"} from the library isn't enough: ${esc(server)} still finds ${nested.length === 1 ? "it" : "them"} through the parent folder. To hide ${nested.length === 1 ? "it" : "them"}, put an empty file named <code>.ignore</code> inside${server === "plex" ? " (Plex: a <code>.plexignore</code> file in the parent with the folder name)" : ""}, or better, change the torrent client to save there no more.`);
   modal(`<div class="modal-head"><h2>Switch ${esc(server)} to the clean library</h2><button class="ghost" data-close>✕</button></div>
     <div class="notice info">The torrent folder stays where it is and keeps seeding. Your media server should only ever scan the library folders, which hold the renamed hardlinks.</div>
     <ol>${steps.map((s) => `<li style="margin-bottom:8px">${s}</li>`).join("")}</ol>
@@ -524,7 +531,8 @@ function bindTests(root) {
       const unresolved = (r.missing || 0) - (r.suggested_mappings || []).reduce((a, m) => a + m.count, 0);
       if (unresolved > 0) html += `<div class="notice" style="margin-top:8px">${unresolved} torrent${unresolved === 1 ? "'s" : "s'"} files couldn't be found from this container (e.g. <code>${(r.missing_paths || []).slice(0, 3).map(esc).join("</code>, <code>")}</code>). Those folders are probably not mounted into Hardlinkarr. They'll be skipped; this is fine if they aren't media.</div>`;
       out.innerHTML = html;
-      if ($("#hs2", out)) $("#hs2", out).onclick = () => switchGuide({ server: readForm(root).mediaserver_type, library_roots: [readForm(root).movies_dir || settingsCache?.movies_dir, readForm(root).tv_dir || settingsCache?.tv_dir].filter(Boolean) });
+      if ($("#hs2", out)) $("#hs2", out).onclick = () => switchGuide({ server: readForm(root).mediaserver_type, locations: r.libraries,
+        library_roots: [settingsCache?.movies_dir, settingsCache?.tv_dir].filter(Boolean) });
     } catch (e) { out.innerHTML = `<div class="notice err">${esc(e.message)}</div>`; }
   });
 }
@@ -664,6 +672,7 @@ routes.settings = async ([sec = "folders"]) => {
 routes.setup = async () => {
   const d = await GET("/api/settings");
   let s = d.settings, step = 0, detected = {};
+  settingsCache = s;
   const steps = [
     { title: "Welcome", body: () => `<h2>Welcome to Hardlinkarr 👋</h2>
       <p>Hardlinkarr watches your torrents, identifies each movie and episode with TMDB, and <b>hardlinks</b> it into your library with a clean, media-server-friendly name.</p>
@@ -708,7 +717,7 @@ routes.setup = async () => {
     };
   };
   // detected folders are saved with the next step change so they survive the settings reload
-  const keep = async (root) => { const vals = { ...detected, ...readForm(root) }; detected = {}; const r = await POST("/api/settings", vals); s = r.settings; };
+  const keep = async (root) => { const vals = { ...detected, ...readForm(root) }; detected = {}; const r = await POST("/api/settings", vals); s = settingsCache = r.settings; };
   render();
 };
 
