@@ -131,3 +131,6 @@ tr:hover td { background: rgba(255,255,255,.015); }
 .log-line { font-family: var(--mono); font-size: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); display: flex; gap: 10px; }
 .log-line .lv { width: 60px; flex: none; text-transform: uppercase; }
 .lv-error { color: var(--err); } .lv-warning { color: var(--warn); } .lv-info { color: var(--info); }
+
+.bar { height: 8px; background: var(--panel2); border-radius: 4px; overflow: hidden; }
+.bar > div { height: 100%; background: var(--accent); transition: width .4s; }

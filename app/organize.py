@@ -109,17 +109,25 @@ def plan_file(path: str, root: str, kind: str, memo: dict | None = None) -> dict
     return entry
 
 
-def plan() -> dict:
+def plan(progress: dict | None = None) -> dict:
+    """Propose renames for every library file. ``progress`` (optional) is updated live with
+    ``done``/``total``/``current`` so the UI can show how far along it is."""
+    from concurrent.futures import ThreadPoolExecutor
+
     s = settings.load()
     threshold = float(s.get("match_threshold") or 0.8)
     managed = arr_managed_folders() if s.get("skip_arr_managed") else set()
     min_size = (s.get("min_video_mb") or 0) * 1024 * 1024
-    memo: dict = {}
+    prog = progress if progress is not None else {}
+    prog.update(done=0, total=0, current="listing files")
     moves, tidy, skipped, unknown, seeding = [], 0, [], [], []
     try:
         seeded = torrent_files(max_age=0)
     except RuntimeError as ex:
         return {"error": str(ex)}
+
+    # 1) list the files, grouped by their movie / show folder
+    groups: dict[tuple, list[str]] = {}
     for root, kind in _roots():
         if not os.path.isdir(root):
             continue
@@ -140,18 +148,45 @@ def plan() -> dict:
                 if os.path.normpath(p) in seeded:
                     seeding.append(p)
                     continue
-                try:
-                    e = plan_file(p, root, kind, memo)
-                except metadata.MetadataError as ex:
-                    return {"error": str(ex)}
-                if not e["dest"]:
-                    unknown.append(e)
-                elif os.path.normcase(os.path.normpath(e["dest"])) == os.path.normcase(os.path.normpath(p)):
-                    tidy += 1
-                else:
-                    e["confident"] = e["confidence"] >= threshold
-                    e["conflict"] = os.path.lexists(e["dest"]) and not _same(p, e["dest"])
-                    moves.append(e)
+                groups.setdefault((root, kind, top or p), []).append(p)
+    prog["total"] = sum(len(v) for v in groups.values())
+
+    # 2) identify each folder; folders run in parallel (the work is mostly waiting on TMDB/arr),
+    #    files inside one folder run in order so a show is looked up once and then cached
+    memo: dict = {}
+    errors: list[str] = []
+    import threading
+    tick = threading.Lock()
+
+    def work(key: tuple, files: list[str]) -> list[dict]:
+        root, kind, top = key
+        out = []
+        for p in files:
+            if errors:
+                break
+            prog["current"] = os.path.basename(top)
+            try:
+                out.append(plan_file(p, root, kind, memo))
+            except metadata.MetadataError as ex:
+                errors.append(str(ex))
+            with tick:
+                prog["done"] = prog.get("done", 0) + 1
+        return out
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda kv: work(*kv), groups.items()))
+    if errors:
+        return {"error": errors[0]}
+    for e in (e for batch in results for e in batch):
+        p = e["src"]
+        if not e["dest"]:
+            unknown.append(e)
+        elif os.path.normcase(os.path.normpath(e["dest"])) == os.path.normcase(os.path.normpath(p)):
+            tidy += 1
+        else:
+            e["confident"] = e["confidence"] >= threshold
+            e["conflict"] = os.path.lexists(e["dest"]) and not _same(p, e["dest"])
+            moves.append(e)
     # two files that want the same destination: only the best keeps it
     by_dest: dict[str, list] = {}
     for e in moves:

@@ -136,9 +136,9 @@ def run_report(kind: str) -> None:
         return
 
     def work() -> None:
-        r.update(running=True, error=None, started=time.time())
+        r.update(running=True, error=None, started=time.time(), progress={})
         try:
-            r["result"] = fn()
+            r["result"] = fn(progress=r["progress"]) if kind == "organize" else fn()
         except Exception as e:  # noqa: BLE001
             r["error"] = str(e)
             traceback.print_exc()

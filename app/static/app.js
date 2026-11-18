@@ -250,6 +250,19 @@ function switchGuide(c) {
 }
 
 /* ------------------------------------------------------------------ organize */
+function organizeProgress(r) {
+  const p = r.progress || {}, done = p.done || 0, total = p.total || 0;
+  const pct = total ? Math.floor((done / total) * 100) : 0;
+  const secs = r.started ? Date.now() / 1000 - r.started : 0;
+  const eta = total && done > 20 ? Math.round(((total - done) * secs) / done / 60) : null;
+  return `<div class="card"><div class="row" style="margin-bottom:8px"><span class="spinner"></span>
+    <b>${total ? `Identifying ${done.toLocaleString()} of ${total.toLocaleString()} files` : "Listing library files…"}</b><span class="spacer"></span>
+    <span class="muted">${total ? `${pct}%` : ""}${eta !== null ? ` · about ${eta < 1 ? "1 min" : eta + " min"} left` : ""}</span></div>
+    <div class="bar"><div style="width:${pct}%"></div></div>
+    <div class="small muted" style="margin-top:6px">${p.current ? esc(p.current) : ""}</div>
+    <div class="small muted" style="margin-top:6px">You can leave this page; it keeps running in the background. Lookups are cached, so later scans are much faster.</div></div>`;
+}
+
 routes.organize = async () => {
   $("#main").innerHTML = `<div class="page-head"><div><h1>Organize library</h1><div class="muted">Rename files already in your library (including existing hardlinks) to your naming format. Renaming a hardlink never touches the seeding copy.</div></div></div>
     <div id="msn"></div><div id="oc"></div>`;
@@ -257,9 +270,13 @@ routes.organize = async () => {
   const box = $("#oc");
   const poll = async (auto) => {
     const r = await GET("/api/cleanup/organize");
-    if (r.running) { box.innerHTML = `<div class="card"><span class="spinner"></span> Identifying library files… large libraries take a few minutes the first time (results are cached).</div>`; return; }
+    if (r.running) {
+      box.innerHTML = organizeProgress(r);
+      if (auto) { clearInterval(pollTimer); pollTimer = setInterval(() => poll(false), 2000); }  // already running: keep watching
+      return;
+    }
     clearInterval(pollTimer);
-    if (r.error) { box.innerHTML = `<div class="notice err">${esc(r.error)}</div>`; }
+    if (r.error) { box.innerHTML = `<div class="notice err">${esc(r.error)}</div><button id="rescan2">Try again</button>`; $("#rescan2").onclick = () => rescan(); return; }
     if (!r.result) {
       if (auto) { await POST("/api/cleanup/organize/scan"); pollTimer = setInterval(() => poll(false), 2000); return poll(false); }
       return;
