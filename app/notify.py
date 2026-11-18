@@ -14,8 +14,12 @@ def _req(method: str, path: str, url: str | None = None, token: str | None = Non
     if kind == "plex":
         return httpx.request(method, f"{url}{path}", params={"X-Plex-Token": token},
                              headers={"Accept": "application/json"}, timeout=15)
-    return httpx.request(method, f"{url}{path}", headers={"X-Emby-Token": token, "X-MediaBrowser-Token": token},
-                         timeout=15)
+    # Jellyfin 10.11+ only accepts the Authorization header; the X-Emby-* headers are legacy
+    # (still what Emby uses). Sending both works with every version of either server.
+    auth = (f'MediaBrowser Client="Hardlinkarr", Device="Hardlinkarr", DeviceId="hardlinkarr", '
+            f'Version="1.0.0", Token="{token}"')
+    return httpx.request(method, f"{url}{path}", timeout=15,
+                         headers={"Authorization": auth, "X-Emby-Token": token, "X-MediaBrowser-Token": token})
 
 
 def test(kind: str, url: str, token: str) -> str:
@@ -24,6 +28,9 @@ def test(kind: str, url: str, token: str) -> str:
         r.raise_for_status()
         return "Plex " + r.json().get("MediaContainer", {}).get("version", "")
     r = _req("GET", "/System/Info", url, token, kind)
+    if r.status_code == 401:
+        raise RuntimeError(f"{kind.title()} rejected the API key. Create one under Dashboard → API Keys "
+                           "and paste it here (not your user password).")
     r.raise_for_status()
     d = r.json()
     return f"{d.get('ProductName', kind.title())} {d.get('Version', '')}"
