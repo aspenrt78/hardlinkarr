@@ -17,14 +17,40 @@ from .paths import assert_managed, in_library, library_roots
 _arr_cache: dict = {"ts": 0, "folders": set()}
 
 
-def arr_managed_folders() -> set[str]:
-    """Folder names (basename) of every movie/series Radarr/Sonarr manage.
+def _to_local(arr_path: str, roots: list[str], learned: dict[str, str]) -> str | None:
+    """Translate a folder path as Radarr/Sonarr see it into the same folder as seen here.
 
-    Compared by name because the arrs see the library through their own mount paths.
+    The arrs often mount the library elsewhere (e.g. /mnt/movies instead of /data/movies), so
+    drop leading parts of their path until the rest exists under one of our library folders.
+    Fewest parts dropped wins, so /mnt/movies/_sub/Film maps to /data/movies/_sub/Film and not
+    to a same-named /data/movies/Film. A prefix that worked once is reused for the next paths.
+    """
+    parts = arr_path.replace("\\", "/").rstrip("/").split("/")
+    parts = [x for x in parts if x]
+    for i in range(1, len(parts)):
+        prefix, rest = "/".join(parts[:i]), "/".join(parts[i:])
+        if prefix in learned:
+            return os.path.join(learned[prefix], rest)
+    for i in range(1, len(parts)):
+        prefix, rest = "/".join(parts[:i]), "/".join(parts[i:])
+        for root in roots:
+            if os.path.isdir(os.path.join(root, rest)):
+                learned[prefix] = root
+                return os.path.join(root, rest)
+    return None
+
+
+def arr_managed_folders() -> set[str]:
+    """Full paths (as seen here) of every movie/series folder Radarr/Sonarr manage.
+
+    Compared by full path, not by folder name: a library can hold another copy of a movie in a
+    folder with the same name that the arr doesn't manage, and that copy may be renamed.
     """
     if time.time() - _arr_cache["ts"] < 600:
         return _arr_cache["folders"]
-    names: set[str] = set()
+    roots = [os.path.normpath(r) for r, _k in _roots()]
+    learned: dict[str, str] = {}
+    folders: set[str] = set()
     for kind, endpoint in (("radarr", "movie"), ("sonarr", "series")):
         url, key = settings.get(f"{kind}_url"), settings.get(f"{kind}_api_key")
         if not url or not key:
@@ -34,11 +60,13 @@ def arr_managed_folders() -> set[str]:
             if r.status_code == 200:
                 for x in r.json():
                     if x.get("path") and (x.get("hasFile") or x.get("statistics", {}).get("episodeFileCount")):
-                        names.add(x["path"].replace("\\", "/").rstrip("/").rsplit("/", 1)[-1])
+                        local = _to_local(x["path"], roots, learned)
+                        if local:
+                            folders.add(os.path.normpath(local))
         except (httpx.HTTPError, ValueError):
             db.log("warning", f"Could not read {kind} library to protect arr-managed folders")
-    _arr_cache.update(ts=time.time(), folders=names)
-    return names
+    _arr_cache.update(ts=time.time(), folders=folders)
+    return folders
 
 
 _torrent_cache: dict = {"ts": 0, "files": frozenset()}
@@ -75,6 +103,16 @@ def _roots() -> list[tuple[str, str]]:
         if s.get(k):
             out.append((os.path.normpath(s[k]), "tv"))
     return list(dict.fromkeys(out))
+
+
+def _in_managed(path: str, managed: set[str]) -> bool:
+    """True if the file sits anywhere inside a Radarr/Sonarr-managed folder."""
+    d = os.path.dirname(os.path.normpath(path))
+    while d and d != os.path.dirname(d):
+        if d in managed:
+            return True
+        d = os.path.dirname(d)
+    return False
 
 
 def _top_folder(path: str, root: str) -> str | None:
@@ -142,7 +180,7 @@ def plan(progress: dict | None = None) -> dict:
                 except OSError:
                     continue
                 top = _top_folder(p, root)
-                if top and os.path.basename(top) in managed:
+                if managed and _in_managed(p, managed):
                     skipped.append(p)
                     continue
                 if os.path.normpath(p) in seeded:
@@ -269,7 +307,7 @@ def auto_rename(lib_path: str, memo: dict | None = None) -> str | None:
     if not root_kind:
         return None
     top = _top_folder(lib_path, root_kind[0])
-    if s.get("skip_arr_managed") and top and os.path.basename(top) in arr_managed_folders():
+    if s.get("skip_arr_managed") and _in_managed(lib_path, arr_managed_folders()):
         return None
     try:
         if os.path.normpath(lib_path) in torrent_files():
